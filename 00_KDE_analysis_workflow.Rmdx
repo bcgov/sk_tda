@@ -1,0 +1,368 @@
+---
+title: "KDE Caribou"
+author: "G Perkins"
+date: "April 28, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# run libraries
+library(lattice)  
+library(ggplot2)
+library(scales)
+library(dplyr)
+library(xlsx)
+library(readxl) 
+#library(GGally)
+library(lubridate)
+library(sf)
+library(sp)
+library(adehabitatHR)
+library(ggmap)
+library(scales)
+library(here)
+library(ggmap)
+library(tidyr)
+
+# set up working directories
+here()
+
+# set up a key 
+register_google(key = "INSERT KEY HERE",  # your Static Maps API key
+                account_type = "standard")
+
+## load data into R
+# <- read.csv("5177_TEC GPS telemetry 2014-ongoing_April2_2019.csv",header = TRUE,stringsAsFactors = TRUE) 
+twdata <- read.csv("5177_TEC GPS telemetry 2014-ongoing_April18_2019.csv",header = TRUE,stringsAsFactors = TRUE) 
+
+# select the columns of interst 
+twdata<- twdata %>% dplyr::select(Animal.ID, Date.Time,Latitude..ø., Longitude..ø., Height..m.,DOP,FixType,LMT_Time,Month,Year)
+twdata <- twdata %>%  mutate(Latitude = Latitude..ø., Longitude = Longitude..ø.,Month.0 = Month, Year.0 = Year )
+twdata <- twdata[ , -which(names(twdata) %in% c("Year","Month",'Latitude..ø.', 'Longitude..ø.'))]
+
+animal.no <- length(unique(twdata$Animal.ID)) # 45? individuals (with blank) 
+
+
+##############################################################
+#### PART 1: DATA EXPLORATION #####
+twdata$Date2=as.Date(twdata$Date.Time, format = '%Y-%m-%d') 
+twdata$Year<- year(twdata$Date2)
+twdata$Month <- month(twdata$Date2) # break out DMY columns
+twdata$Day <- day(twdata$Date2)
+twdata$Date.j <- julian(twdata$Date2)#Add julian day
+twdata$Hours <- as.numeric(format(as.POSIXct(strptime(twdata$Date.Time,"%Y-%m-%d %H:%M",tz="")) ,format = "%H"))
+
+# remove data with missing ID no
+twdata <- twdata[twdata$Animal.ID != "",]
+
+#if the month and year is missing then fill in wih original dataset values for Month and year 
+nomonthdata <- twdata %>% filter(is.na(Month)) %>% mutate(Month = Month.0,Year = Year.0); length(nomonthdata$Animal.ID)
+twdata <- twdata %>% drop_na(Month); length(twdata$Month)
+twdata <- rbind(twdata, nomonthdata)
+
+# group cariou into seasons  
+twdata <- twdata %>% mutate(season = ifelse(Month %in% c(4,5),"SM",
+                                     ifelse(Month == 6,"C",
+                                     ifelse(Month %in% c(7,8,9),"S",
+                                     ifelse(Month == 10,"R", 
+                                     ifelse(Month == 11,"FM",
+                                     ifelse(Month %in% c(12,1,2,3),"W", NA)))))))
+
+## Add a caribou year (december = following year)
+twdata <- twdata %>% mutate(year.C = ifelse(Month %in% c(1:11),Year,
+                                     ifelse(Month == 12,Year + 1, NA)))
+ 
+animal.years <- na.omit(unique(twdata$year.C))                                    
+```
+
+## Summary 
+
+We used Caribou telemetry data collected from 2015 - 2019 to create Kernal Density Estimates(KDE) for individual animals and all animals combined.KDEs are also calaculated per season and per year to investigate temporal change. 
+
+Telemetry data is collected for `r animal.no` from `r min(animal.years)` to `r max(animal.years)`. Seasonal Kernal density estimates were calculated per season as defined by Cichowski (2005). These include: Summer (July to September), Rut (October), Fall migration (November), Winter (December to March), Calving (June), Spring Migration (April and May). Where seasons overlapped years (ie; winter), seasons were grouped into succesive years. For example Winter 2016 was defined from December 2015 to March 2015. 
+
+KDEs were calculated using R (package: adeHabitatHR) after investigating the effect of various smoothing parameters and in conjunction with the current literature. All analysis and data are stored here:`r #"I:\ES\General\Wildlife\WildlifeSpecies\Caribou\Tweedsmuircaribou\2015-2019\KHR_Analysis"`. and on Github:TO BE FILLED IN 
+
+
+## Caribou Telemetry Data
+
+The total number of raw fixes varied between individuals with season and years. All KDEs were calculated using a minimum of 50 unique locations as recommended for home range calculations (Seaman 1999, Kernohan 2001). Note telemetry data is yet to be subset by a specific time interval and currently includes all raw fixes. 
+
+
+```{r include=TRUE, echo = FALSE}
+
+# create some summary plots to show the Caribou data 
+
+p1 <- ggplot(twdata) + geom_bar(aes(Animal.ID)) + theme(axis.text.x = element_text(angle = 60, hjust = 1))       + ggtitle("Number of Raw fixes per Caribou (Animal.ID)"); p1
+
+# Check the multiple counts of anaimals per day 
+counts.per.day <- twdata %>% group_by(Animal.ID,Date.j) %>% 
+  summarise(total = n(),unique = unique(Date.j)) %>% 
+  group_by(Animal.ID,total) %>% 
+  summarise(total.j = n()) 
+
+pp = ggplot(data = counts.per.day, aes(total,total.j,col = Animal.ID)) + geom_point() + ggtitle('Number of fixes per day per animal')
+pp
+
+id.season.yr <- twdata %>% group_by(Animal.ID,year.C,season) %>% summarise(count = n()) #; id.season.yr
+id.season <- twdata %>% group_by(Animal.ID,season) %>% summarise(count = n()) #; id.season
+id.jdate <- twdata %>% group_by(Animal.ID,year.C) %>% summarise(count = length(unique(Date.j))) #; id.jdate 
+id.total <- twdata %>% group_by(Animal.ID) %>% summarise(count = n()) #; id.total
+
+p3.1 <- ggplot(id.season,aes(x = season,count)) + geom_bar(stat ="identity") + facet_wrap(~Animal.ID) + theme(axis.text.x = element_text(angle = 90)) + ggtitle("Total Telemetry fixes per animal per season "); p3.1
+
+
+# check the spread of Caribou with maped locations 
+p7.1 = ggplot(twdata, aes(Longitude,Latitude,colour = season)) + geom_point() #; p7.1
+
+ p8.1 = ggplot(twdata, aes(Longitude,Latitude,colour = season)) + facet_wrap(~year.C) + geom_point() + 
+   ggtitle("Distribution of Caribou Telemetry fixes per season per year"); p8.1
+       
+
+```
+
+## Kernel density estimates (KDE)
+
+KDEs are very sensitive to input parameters, specfically the bandwidth (h) which determines the smoothing parameter (https://cran.r-project.org/web/packages/adehabitatHR/vignettes/adehabitatHR.pdf). H parameters can be estimated using three methods 1) a reference bandwidth (h = σ × n ^−1/6), however this is generally an overestimate of the range, and is not suitable for multi-modal distributions. 2) Least Square Cross Validation (LSCV), which minimises the difference in volumne between the true UD and the estimates UD. 3) A subjective visual choice for the smoothing parameter, based on successive trials (Silverman, 1986; Wand & Jones 1995).
+
+To create home ranges for each unique id we used a bivariate normal kernel with a variety of h (smoothing parameters). We then interpreted visually to determine size to use based on successive trials. This is supported by the literature (Hemson et al. 2005; Calenge et al. 2011)
+
+After extensive testing with a variety of h parameters we elected to have a user estimated h paramter. This followed implementation of similar Caribou Analysis conducted by T. Muhly <https://github.com/bcgov/clus/blob/master/R/caribou_habitat/04_caribou_habitat_model_telemetry_data_prep_doc.Rmd>
+
+
+## Kernal density example plots
+
+The following plots show the difference in smoothing parameters (1000,4000)
+
+```{r, include = TRUE,echo = TRUE, warning=FALSE}
+
+## Calculate Kernal density estiamtes ################
+aoi <- unique(twdata$Animal.ID)
+yrs.to.map <- unique(twdata$year.C)  
+seasons.to.map <-unique(twdata$season) 
+  
+###################################
+## Testing with Winter 
+####################################
+
+#for(i in 1:length(season.to.map)){ 
+  i = 1 # winter season 
+  seas <-seasons.to.map[i]
+  tdf.0 <- twdata %>% filter(season == seas)
+  
+  ## drop animals with less than 5 records 
+  tdf.0$Animal.ID <- droplevels(tdf.0$Animal.ID)
+  tdf <- tdf.0[, c("Animal.ID", "Longitude", "Latitude")]  #; length(tdf$Animal.ID)
+  
+  # filter for individuals with more than 50 locations 
+  tdf.u <- unique(tdf)
+  
+  #tdf.u.df <- tdf.u %>% group_by(Animal.ID) %>%  summarise (count = n ())
+  tdf <- tdf.u [tdf.u$Animal.ID %in% names(table(tdf.u$Animal.ID)) [table(tdf.u$Animal.ID) >= 50], ]
+  tdf$Animal.ID <- droplevels(tdf$Animal.ID)
+  
+  # Create a SpatialPointsDataFrame by defining the coordinates
+  coordinates(tdf) <- c("Longitude", "Latitude")
+  proj4string(tdf) <- CRS( "+proj=longlat +datum=WGS84 +units=m +no_defs" )
+  tdfgeo <- spTransform(tdf, CRS("+init=epsg:3005")) # Transform to UTM 
+  
+  ##################################################################################################
+  # Test a number of KDE versions: href, h = 1000,2000,4000, LSCV
+  
+  ##############################################################################################
+  # KDE 2) run kernal density for inidividual animasl with user selected h ref (after testing)
+ 
+  file.oi <- here("outputs",paste("KDE95",seas,"1000id.shp",sep = ""))
+  if (file.exists(file.oi)) {
+    ver95.2.sf <- st_read(here("outputs",paste("KDE95",seas,"1000id.shp",sep = "")))}else{
+    
+      print( "... running KDE this may take a few minutes")
+      kde2  <- kernelUD(tdfgeo, h = 1000, kern = c("bivnorm"), grid = 500,extent = 2)
+      ver95.2 <- getverticeshr(kde2,95) ;   ver95.2.sf<- st_as_sf(ver95.2)
+      #ver75.2 <- getverticeshr(kde2,75) ;   ver75.2.sf<- st_as_sf(ver75.2)
+      #ver50.2 <- getverticeshr(kde2,50) ;   ver50.2.sf<- st_as_sf(ver50.2)
+      st_write(ver95.2.sf,here("outputs",paste("KDE95",seas,"1000id.shp",sep = "")))}
+  
+  plot(st_geometry(ver95.2.sf),col = "yellow") 
+  #plot(st_geometry(ver75.2.sf),col = "blue", add = TRUE)
+  #plot(st_geometry(ver50.2.sf),col = "purple", add = TRUE)
+  plot(tdfgeo, pch = 1, size = 0.5, add = TRUE)     # Add points 
+  
+``` 
+ 
+Figure 1: h bandwidth = 2000 
+```{r, include = TRUE,echo = FALSE, warning=FALSE}
+
+   ##################################################################################################
+  # KDE 4) run kernal density for inidividual animasl with user selected h ref (after testing)
+   
+  file.oi <- here("outputs",paste("KDE95",seas,"4000id.shp",sep = ""))
+  if (file.exists(file.oi)) {
+    ver95.4.sf <- st_read(here("outputs",paste("KDE95",seas,"4000id.shp",sep = "")))}else{
+    
+      print( "... running KDE this may take a few minutes")
+      kde4  <- kernelUD(tdfgeo, h = 1000, kern = c("bivnorm"), grid = 500,extent = 2)
+      ver95.4 <- getverticeshr(kde2,95) ;   ver95.4.sf<- st_as_sf(ver95.4)
+      st_write(ver95.4.sf,here("outputs",paste("KDE95",seas,"4000id.shp",sep = "")))}
+  
+  plot(st_geometry(ver95.4.sf),col = "blue") 
+  plot(tdfgeo, pch = 1, size = 0.5, add = TRUE)     # Add points 
+
+  
+  
+```
+
+Figure 1: h bandwidth = 4000
+
+
+
+```{r, echo = FALSE}
+# 
+#   ##################################################################################################
+#   ###################################################################################################
+#   ## PART 2: 
+#   ## Run KDE for all animals combined 
+#   ##################################################################################################
+#   
+#   ## drop animals with less than 5 records 
+#   tdf <- tdf.0[, c("Longitude", "Latitude")]  #; length(tdf$Animal.ID)
+#   
+#   # Create a SpatialPointsDataFrame by defining the coordinates
+#   coordinates(tdf) <- c("Longitude", "Latitude")
+#   proj4string(tdf) <- CRS( "+proj=longlat +datum=WGS84 +units=m +no_defs" )
+#   tdfgeo <- spTransform(tdf, CRS("+init=epsg:3005")) # Transform to UTM 
+#   
+#    ##############################################################################################
+#   # KDE 2) run kernal density for inidividual animasl with user selected h ref (after testing)
+#   kde2  <- kernelUD(tdfgeo, h = 2000, kern = c("bivnorm"), grid = 500,extent = 2)
+#   ver95.2 <- getverticeshr(kde2,95) ;   ver95.2.sf<- st_as_sf(ver95.2)
+#   #st_write(ver95.2.sf,here("outputs",paste("KDE95",seas,"2000all.shp",sep = "")))
+#   
+#   plot(st_geometry(ver95.2.sf),col = "green", add = TRUE)
+#   plot(tdfgeo, pch = 1, size = 0.5, add = TRUE)     # Add points 
+#   
+# ``` 
+#   
+#   Add some desciptive text 
+#   
+# ```{r} 
+#    ###################################################################################################
+#   ## PART 3: 
+#   ## Run KDE for years all animals 
+#   ##################################################################################################
+#   
+#   ## drop animals with less than 5 records 
+#   tdf.0$Animal.ID <- droplevels(tdf.0$Animal.ID)
+#   tdf <- tdf.0[, c("year.C","Longitude", "Latitude")]  #; length(tdf$Animal.ID)
+#   
+#   # filter for individuals with more than 50 locations 
+#   tdf.u <- unique(tdf)
+#   years.c.sum <- tdf %>% group_by(year.C) %>% summarise(count = n())
+# 
+#   # Create a SpatialPointsDataFrame by defining the coordinates
+#   coordinates(tdf) <- c("Longitude", "Latitude")
+#   proj4string(tdf) <- CRS( "+proj=longlat +datum=WGS84 +units=m +no_defs" )
+#   tdfgeo <- spTransform(tdf, CRS("+init=epsg:3005")) # Transform to UTM 
+#   
+#   # KDE 5) run kernal density for inidividual animasl with user selected h ref (after testing)
+#   kde5  <- kernelUD(tdfgeo, h = 2000, kern = c("bivnorm"), grid = 500,extent = 2)
+#   ver95.5 <- getverticeshr(kde5,95) ;   ver95.5.sf<- st_as_sf(ver95.5)
+#   #st_write(ver95.5.sf,here("outputs","KDE95W2000pyr.shp"))
+#   #plot(st_geometry(ver95.5.sf),col = "forest green", add = TRUE)
+#   #plot(st_geometry(ver75.4.sf),col = "blue", add = TRUE)
+#   #plot(st_geometry(ver50.4.sf),col = "purple", add = TRUE)
+#   plot(tdfgeo, pch = 1, size = 0.5, add = TRUE)     # Add points 
+#   
+# ```  
+#  
+#  ADD SOME DESCRIPTIVE 
+#  
+# ```{r} 
+#   ####################################################################################################
+#   ###################################################################################################
+#   ## PART 4: 
+#   ## Run KDE all animals per year. 
+#   ##################################################################################################
+#   
+#   ## drop animals with less than 5 records 
+#   #tdf.0$Animal.ID <- droplevels(tdf.0$Animal.ID)
+#   tdf <- tdf.0[, c("Animal.ID","year.C","Longitude", "Latitude")]  #; length(tdf$Animal.ID)
+#   
+#   # filter for individuals with more than 50 locations 
+#   tdf.u <- unique(tdf)
+#   
+#   # get a list of animal id and year when unique locations is >50 
+#   years.c.id.sum <- tdf.u %>% group_by(year.C,Animal.ID) %>% summarise(count = n())
+#   
+#   # filter the dataset 
+#   tdf.u <- left_join(tdf.u, years.c.id.sum , by = c('year.C','Animal.ID'))
+#   tdf.u <- tdf.u[tdf.u$count > 50,]   #;  unique(tdf.u$count)
+#   
+#   yrs.to.map <- unique(tdf.u$year.C )  
+#   
+# ## loop this through the years of interest 
+#   for(ii in 4:length(yrs.to.map )){ 
+#     #ii = 2 # 2015 or first year 
+#     yrs <-yrs.to.map [ii]
+#     tdf.yr <-  tdf.u  %>% filter(year.C == yrs)
+#     sum.yr <- tdf.yr %>% group_by(year.C,Animal.ID) %>% summarise(count = n())
+#     tdf <- tdf.yr %>% dplyr::select('Animal.ID','Longitude', 'Latitude')
+#     tdf$Animal.ID <- droplevels(tdf$Animal.ID)
+#     
+#     #sum.yr <- tdf.yr %>% group_by(year.C,Animal.ID) %>% summarise(count = n())
+#     
+#     # Create a SpatialPointsDataFrame by defining the coordinates
+#     coordinates(tdf) <- c("Longitude", "Latitude")
+#     proj4string(tdf) <- CRS( "+proj=longlat +datum=WGS84 +units=m +no_defs" )
+#     tdfgeo <- spTransform(tdf, CRS("+init=epsg:3005")) # Transform to UTM 
+#     
+#     # KDE 5) run kernal density for inidividual animasl with user selected h ref (after testing)
+#     kde5  <- kernelUD(tdfgeo, h = 2000, kern = c("bivnorm"), grid = 500,extent = 2)
+#     ver95.5 <- getverticeshr(kde5,95) ;   ver95.5.sf<- st_as_sf(ver95.5)
+#     #st_write(ver95.5.sf,here("outputs", paste("KDE95",seas,"2000ID_",yrs,".shp",sep = "")))
+#     
+#     plot(st_geometry(ver95.5.sf),col = "forest green", add = TRUE)
+#     #plot(st_geometry(ver75.4.sf),col = "blue", add = TRUE)
+#     #plot(st_geometry(ver50.4.sf),col = "purple", add = TRUE)
+#     plot(tdfgeo, pch = 1, size = 0.5, add = TRUE)     # Add points 
+#   
+#   } 
+#   
+  
+```
+
+
+
+### Appendices 1: KDE Parameters in Detail 
+
+KDE were used to determine density of individuals. Calculations for KDE require consideration of the mathematical method to describe the density function. A detailed description of the parameters can be found here :  (http://www.spatialecology.com/gme/kde.htm). 
+
+- Kernal Type:  The type of kernal is limited to Gaussian (bivariate normal), quadratic or normal. We used the bivariate normal model as default. 
+
+- Bandwidth (h): This determines the level of smoothing used. The two types include "href" and "LSCV"(Least Squared Cross Validation). The bandwidth will be determined by the type of kernal chosen. Some tools and functions are available to estiamte the optimal Bandwidth ie: (ks: Hpi.diag) (https://cran.r-project.org/web/packages/ks/ks.pdf) or to plot optimal bandwidth using LSCV method. (ks:plotLSCV()). Using the Hpi.diag provides estimates of h that can be entered manually. 
+
+- Cell size : This determines the area or extent over which the home range will be estimated. This is a mix of fine scale and time consuming processing and faster blocky resolution over a continuous surface. As a rule of thumb you can  GME suggests: take the square root of the x or y variance value (whichever is smaller) and divide by 5 or 10 (I usually round to the nearest big number - so 36.7 becomes 40). Before using this rule of thumb value calculate how many cells this will result in for the output (take the width and height of you input points, divide by the cell size, and multiply the resulting numbers together). If you get a value somewhere between 1-20 million, then you have a reasonable value. If you have a value much larger then 20 million cells then consider increasing the cell size (http://www.spatialecology.com/gme/kde.htm).
+
+
+Note it is also possible to run KDE with set barriers and boundaries . 
+
+
+
+##References 
+- Packages: estimate Kernel home range Utiliation Distribution Using adehabitatHR (Calenge et al. 2011) (https://cran.r-project.org/web/packages/adehabitatHR/vignettes/adehabitatHR.pdf)
+
+
+- KDE : "http://www.spatialecology.com/gme/kde.htm"
+
+- https://www.ckwri.tamuk.edu/sites/default/files/publication/pdfs/2017/leonard_analyzing_wildlife_telemetry_data_in_r.pdf
+
+ - Seaman, D. E., Millspaugh, J. J., Kernohan, B. J., Brundige, G. C., Raedeke, K. J., & Gitzen, R. A. (1999). Effects of sample #size on kernel home range estimates. The journal of wildlife management, 739-747.
+- Kernohan, B. J., R. A. Gitzen, and J. J. Millspaugh. 2001. Analysis of animal space use and movements. Pages 125–166 in J. J. #Millspaugh and J. M. Marzluff, editors. Radio tracking and animal populations. Academic Press, San Diego, CA, USA
+
+- Hemson, G., Johnson, P., South, A., Kenward, R., Ripley, R., & MACDONALD, D. (2005). Are kernels the mustard? Data from global positioning system (GPS) collars suggests problems for kernel home‐range analyses with least‐squares cross‐validation. Journal of Animal Ecology, 74(3), 455-463
+
+## Data Location.
+
+- Previously Run KDE (Hearnden, B) : "W:\srm\smt\Workarea\BHearnden\Client_Proj\AM\Tweedsmuir_Cariboo"
