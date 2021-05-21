@@ -55,7 +55,7 @@ This project is currently in development
 
 To report bugs/issues/feature requests, please file an [issue](https://github.com/bcgov/sk_tda/issues/).
 
-### How to Contribute
+### How to contribute
 
 If you would like to contribute, please see our [CONTRIBUTING](CONTRIBUTING.md) guidelines.
 
@@ -63,7 +63,7 @@ Please note that this project is released with a [Contributor Code of Conduct](C
 
 ### License
 
-[![Creative Commons License](https://i.creativecommons.org/l/by/4.0/88x31.png)](http://creativecommons.org/licenses/by/4.0/)
+[![Creative Commons License](https://i.creativecommons.org/l/by/4.0/88x31.png)](http://creativecommons.org/licenses/by/4.0/).
 
 ```
 Copyright 2019 Province of British Columbia
